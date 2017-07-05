@@ -79,6 +79,11 @@ def build_dataset(questions):
 
     data.append(index)
 
+  if FLAGS.write_to_file:
+    outfile = open('vocab.txt', 'w')
+    for word in dictionary.keys():
+      outfile.write('%s\n' % word)
+
   reversed_dictionary = dict(zip(dictionary.values(), dictionary.keys()))
   return data, dictionary, reversed_dictionary, question_vocab, answer_vocab
 
@@ -263,5 +268,7 @@ if __name__ == '__main__':
                       help='The file with question data')
   parser.add_argument('--log_dir', type=str, default='logs/',
                       help='Summaries log directory')
+  parser.add_argument('--write_to_file', type=bool, default=False,
+                      help='True to write CLEVR vocab words to vocab.txt, False otherwise')
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
