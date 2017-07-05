@@ -148,7 +148,8 @@ def train(data, dictionary, reverse_dictionary):
     with tf.device('/cpu:0'):
       # Look up embeddings for inputs.
       embeddings = tf.Variable(
-          tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
+          tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0),
+          name='embeddings')
       embed = tf.nn.embedding_lookup(embeddings, train_inputs)
 
       # Add embeddings to tensorboard
@@ -159,8 +160,10 @@ def train(data, dictionary, reverse_dictionary):
       # Construct the variables for the NCE loss
       nce_weights = tf.Variable(
           tf.truncated_normal([vocabulary_size, embedding_size],
-                              stddev=1.0 / math.sqrt(embedding_size)))
-      nce_biases = tf.Variable(tf.zeros([vocabulary_size]))
+                              stddev=1.0 / math.sqrt(embedding_size)),
+          name='nce_weights')
+      nce_biases = tf.Variable(tf.zeros([vocabulary_size]),
+          name='nce_biases')
 
     # Compute the average NCE loss for the batch.
     # tf.nce_loss automatically draws a new sample of the negative labels each

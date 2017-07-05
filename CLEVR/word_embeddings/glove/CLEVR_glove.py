@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import argparse
+import json
 
 import numpy as np
 import tensorflow as tf
@@ -11,15 +12,12 @@ from tensorflow.contrib.tensorboard.plugins import projector
 FLAGS = None
 
 def build_embedding_matrix(embedding_file, vocab_file):
-  model = gensim.models.KeyedVectors.load_word2vec_format(embedding_file, binary=True)
+  model = json.load(open(embedding_file))
   vocabulary = [word.strip() for word in open(vocab_file)]
   embedding = np.zeros((len(vocabulary), 300))
   for i, word in enumerate(vocabulary):
-    try:
-      vec = model.word_vec(word).reshape(1, 300)
-      embedding[i] = vec
-    except KeyError:
-      print('\"%s\" has no word vector' %(word))
+    vec = np.asarray(model[word]).reshape(1, 300)
+    embedding[i] = vec
   return embedding
 
 def build_and_run_graph(word_vectors):
@@ -27,7 +25,7 @@ def build_and_run_graph(word_vectors):
   config = projector.ProjectorConfig()
 
   with graph.as_default():  
-    embedding_tensor = tf.Variable(word_vectors, name='google_news_embeddings')
+    embedding_tensor = tf.Variable(word_vectors, name='glove_embeddings')
     
     embedding = config.embeddings.add()
     embedding.tensor_name = embedding_tensor.name
@@ -38,7 +36,7 @@ def build_and_run_graph(word_vectors):
   with tf.Session(graph=graph) as session:
     init.run()
 
-    summary_writer = tf.summary.FileWriter('logs', session.graph)
+    summary_writer = tf.summary.FileWriter(FLAGS.log_dir, session.graph)
     projector.visualize_embeddings(summary_writer, config)
     saver = tf.train.Saver()
 
@@ -55,7 +53,7 @@ def main(_):
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
-  parser.add_argument('--embedding_file', type=str, default='./GoogleNews-vectors-negative300.bin',
+  parser.add_argument('--embedding_file', type=str, default='./embeddings.json',
                       help='Path to the google embedding file')
   parser.add_argument('--vocab_file', type=str, default='./vocab.tsv',
                       help='Path to CLEVR vocab file')
