@@ -77,6 +77,7 @@ def serialize_examples(question_file, dictionary):
     writer.write(ex.SerializeToString())
     if i%100 == 0:
       update_progress(i+1, num_questions)
+  update_progress(num_questions, num_questions)
   writer.close()
 
 
@@ -124,10 +125,10 @@ def build_and_run_graph(embedding, dictionary, reverse_dictionary, answer_dict):
   print(reverse_dictionary)
   print(answer_dict)
 
-  batch_size = 10
+  batch_size = 64
   num_hidden = 512
   num_answers = 28
-  num_epochs = 1000
+  num_epochs = 5000
   vocab_size = embedding.shape[0]
 
 
@@ -188,10 +189,10 @@ def build_and_run_graph(embedding, dictionary, reverse_dictionary, answer_dict):
     sess.run(embeddings_init, feed_dict={embeddings_placeholder: embedding})
     for i in range(num_epochs):
       sess.run(train_op)
-      if i%10 == 0:
+      if i%50 == 0:
         s = sess.run(merged_summary)
         summary_writer.add_summary(s, i)
-      if i%100 == 0:
+      if i%500 == 0:
         q, p, ans, acc = sess.run([questions, prediction, answers, accuracy])
         print('================================================================================')
         print('Epoch %d' %(i))
@@ -199,6 +200,9 @@ def build_and_run_graph(embedding, dictionary, reverse_dictionary, answer_dict):
         print('Accuracy: %f' %(acc))
         print_batch(reverse_dictionary, answer_dict, q, ans, p)
         saver.save(sess, os.path.join(FLAGS.logdir, 'model.ckpt'), i)
+
+    coord.request_stop()
+    coord.join(threads)
 
 def main(_):
   if not tf.gfile.Exists(FLAGS.datadir):
@@ -236,8 +240,11 @@ def main(_):
     tf.gfile.MakeDirs(os.path.join(FLAGS.logdir, '1'))
     FLAGS.logdir = os.path.join(FLAGS.logdir, '1')
   else:
-    runs = [int(folder) for folder in tf.gfile.ListDirectory(FLAGS.logdir)]
-    new_run = max(runs) + 1
+    if tf.gfile.Exists(FLAGS.logdir):
+      runs = [int(folder) for folder in tf.gfile.ListDirectory(FLAGS.logdir)]
+      new_run = max(runs) + 1
+    else:
+      new_run = 1
     tf.gfile.MakeDirs(os.path.join(FLAGS.logdir, str(new_run)))
     FLAGS.logdir = os.path.join(FLAGS.logdir, str(new_run))
   
