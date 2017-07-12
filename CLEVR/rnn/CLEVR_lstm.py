@@ -16,7 +16,7 @@ embedding_dim = 300
 def build_embeddings(embedding_file, vocab_file):
   model = json.load(open(embedding_file))
   vocabulary = [word.strip() for word in open(vocab_file)]
-  embedding = np.zeros((len(vocabulary) + 1, embedding_dim))
+  embedding = np.zeros((len(vocabulary), embedding_dim))
   dictionary = {'<PAD>': 0}
   reverse_dictionary = {0: '<PAD>'}
   for i, word in enumerate(vocabulary[1:]):
@@ -52,7 +52,7 @@ def serialize_examples(question_file, dictionary):
     ex = tf.train.SequenceExample()
     ex.context.feature['length'].int64_list.value.append(len(question))
     ex.context.feature['answer'].int64_list.value.append(answer_dict[answer])
-    fl_tokens = ex.feature_lists.feature_list['tokens']
+    fl_tokens = ex.feature_lists.feature_list['words']
     for token in question:
       fl_tokens.feature.add().int64_list.value.append(dictionary[token.lower()])
     return ex
@@ -77,34 +77,7 @@ def serialize_examples(question_file, dictionary):
     writer.write(ex.SerializeToString())
     if i%100 == 0:
       update_progress(i+1, num_questions)
-  update_progress(num_questions, num_questions)
   writer.close()
-
-
-def read_and_decode(filename_queue):
-  # with tf.name_scope('Input_Handlers'):
-  reader = tf.TFRecordReader()
-  _, serialized_example = reader.read(filename_queue)
-  context_features = {
-    'length': tf.FixedLenFeature([], dtype=tf.int64), 
-    'answer': tf.FixedLenFeature([], dtype=tf.int64)
-  }
-  sequence_features = {
-    'tokens': tf.FixedLenSequenceFeature([], dtype=tf.int64)
-  }
-  context_parsed, sequence_parsed = tf.parse_single_sequence_example(serialized_example, context_features, sequence_features)
-  return context_parsed['length'], sequence_parsed['tokens'], context_parsed['answer']
-
-
-def generate_batch(batch_size, num_epochs=1):
-  with tf.name_scope('Input_Handlers'):
-    filename_queue = tf.train.string_input_producer([os.path.join(FLAGS.datadir, 'train_examples.tfrecords')], num_epochs=num_epochs)
-    length, question, answer = read_and_decode(filename_queue)
-
-  with tf.name_scope('Batch_Generator'):
-    lengths, questions, answers = tf.train.batch([length, question, answer], batch_size, dynamic_pad=True)
-
-  return lengths, questions, answers
 
 
 def print_batch(reverse_dictionary, answer_dict, questions, answers, predictions):
@@ -118,93 +91,162 @@ def print_batch(reverse_dictionary, answer_dict, questions, answers, predictions
     print('')
     print('Predicted answer: %s Correct answer: %s' %(answer_dict[predictions[i]], answer_dict[answers[i]]))
 
-def build_and_run_graph(embedding, dictionary, reverse_dictionary, answer_dict):
 
-  # embedding, dictionary, reverse_dictionary = build_embeddings('embeddings.json', 'vocab.txt')
-  print(dictionary)
-  print(reverse_dictionary)
-  print(answer_dict)
+class RNN_Model:
+  def __init__(self, config):
+    self.params = config
+    self.graph = tf.Graph()
+    self.saver = None
+    self.projector = projector.ProjectorConfig()
+    self.coord = None
+    self.threads = None
+    self.step = 0
+    self.q_lengths = None
+    self.questions = None
+    self.init_op = None
+    self.answers = None
+    self.embedding_placeholder = None
+    self.embedding_init_op = None
+    self.embedding_lookup = None
+    self.output = None
+    self.final_state = None
+    self.logits = None
+    self.prediction = None
+    self.correct = None
+    self.accuracy = None
+    self.loss = None
+    self.train_op = None
+    self.summary_writer = None
+    self.summary_op = None
 
-  batch_size = 64
-  num_hidden = 512
-  num_answers = 28
-  num_epochs = 5000
-  vocab_size = embedding.shape[0]
+  def build_input_pipeline(self, input_files):
+    with self.graph.name_scope('Input_Handlers'):
+      filename_queue = tf.train.string_input_producer(input_files)
+      reader = tf.TFRecordReader()
+      _, serialized_example = reader.read(filename_queue)
+      context_features = {
+        'length': tf.FixedLenFeature([], dtype=tf.int64),
+        'answer': tf.FixedLenFeature([], dtype=tf.int64)
+      }
+      sequence_features = {
+        'words': tf.FixedLenSequenceFeature([], dtype=tf.int64)
+      }
+      context_parsed, sequence_parsed = tf.parse_single_sequence_example(serialized_example, context_features, sequence_features)
+      length = context_parsed['length']
+      question = sequence_parsed['words']
+      answer = context_parsed['answer']
+    with self.graph.name_scope('Batch_Generator'):
+      with self.graph.control_dependencies([length, question, answer]):
+        self.q_lengths, self.questions, self.answers = tf.train.batch([length, question, answer], self.params['batch_size'], dynamic_pad=True)
 
+  def build_embedding_layer(self, embedding):
+    self.vocab_size = embedding.shape[0]
+    with self.graph.name_scope('Embedding_Layer'):
+      embeddings = tf.Variable(tf.constant(0.0, shape=[self.vocab_size, embedding.shape[1]]), name='Embeddings')
+      self.embedding_placeholder = tf.placeholder(tf.float32, [self.vocab_size, embedding.shape[1]])
+      self.embedding_init_op = embeddings.assign(self.embedding_placeholder)
+      self.embedding_lookup = tf.nn.embedding_lookup(embeddings, self.questions)
 
-  lengths, questions, answers = generate_batch(batch_size, num_epochs)
+      embedding_visual = self.projector.embeddings.add()
+      embedding_visual.tensor_name = embeddings.name
 
-  config = projector.ProjectorConfig()
+  def build_rnn_layer(self):
+    with self.graph.name_scope('LSTM'):
+      cell = tf.nn.rnn_cell.LSTMCell(num_units=self.params['num_hidden'])
+      self.output, self.final_state = tf.nn.dynamic_rnn(cell, self.embedding_lookup, dtype=tf.float32, sequence_length=self.q_lengths)
 
-  with tf.name_scope('Embedding_Ops'):
-    embeddings = tf.Variable(tf.constant(0.0, shape=[vocab_size, embedding_dim]),
-                    trainable=True, name="Embeddings")
-    embeddings_placeholder = tf.placeholder(tf.float32, [vocab_size, embedding_dim])
-    embeddings_init = embeddings.assign(embeddings_placeholder)
-
-    embed = tf.nn.embedding_lookup(embeddings, questions)
-
-    embedding_visual = config.embeddings.add()
-    embedding_visual.tensor_name = embeddings.name
-
-  with tf.name_scope('LSTM'):
-    cell = tf.nn.rnn_cell.LSTMCell(num_units=num_hidden)
-    output, final_state = tf.nn.dynamic_rnn(cell, embed, dtype=tf.float32, sequence_length=lengths)
-
-  with tf.variable_scope('Fully_Connected_Output'):
-      weights = tf.get_variable('weights', [num_hidden, num_answers], 
-                  initializer=tf.random_normal_initializer(0.0, 1.0))
-      biases = tf.get_variable('biases', [num_answers], initializer=tf.constant_initializer(0.0))
-      logits = tf.matmul(final_state[0], weights) + biases
+  def build_classifier(self):
+    with tf.variable_scope('Classifier'):
+      weights = tf.get_variable('weights', [self.params['num_hidden'], self.params['num_answers']],
+                        initializer=tf.random_normal_initializer(0.0, 1.0))
+      biases = tf.get_variable('biases', [self.params['num_answers']], initializer=tf.constant_initializer(0.0))
+      self.logits = tf.matmul(self.final_state[0], weights) + biases
       tf.summary.histogram('weights', weights)
       tf.summary.histogram('biases', biases)
 
-  with tf.name_scope('Evaluation'):
-    prediction = tf.argmax(tf.nn.softmax(logits, name='Prediction'), 1)
-    correct = tf.equal(prediction, answers)
-    accuracy = tf.reduce_mean(tf.cast(correct, tf.float32), name='Accuracy')
-    tf.summary.scalar('accuracy', accuracy)
+  def build_evaluation_layer(self):
+    with self.graph.name_scope('Evaluation'):
+      self.prediction = tf.argmax(tf.nn.softmax(self.logits, name='Prediction'), 1)
+      self.correct = tf.equal(self.prediction, self.answers)
+      self.accuracy = tf.reduce_mean(tf.cast(self.correct, tf.float32), name='Accuracy')
+      tf.summary.scalar('accuracy', self.accuracy)
+    with self.graph.name_scope('Cross_Entropy'):
+      self.loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.logits, labels=self.answers))
+      tf.summary.scalar('xent', self.loss)
 
-  with tf.name_scope('Cross_Entropy'):
-    loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=answers))
-    tf.summary.scalar('xent', loss)
+  def build_training_op(self):
+    with self.graph.name_scope('Training'):
+      self.train_op = tf.train.AdamOptimizer(1e-4).minimize(self.loss)
 
-  with tf.name_scope('Train'):
-    train_op = tf.train.AdamOptimizer(1e-4).minimize(loss)
+  def build_init_op(self):
+    with tf.name_scope('Initialization'):
+      self.init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 
-  with tf.name_scope('Initialization'):
-    init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
+  def build_summary_op(self, logdir):
+    self.summary_writer = tf.summary.FileWriter(logdir, graph=self.graph)
+    self.summary_op = tf.summary.merge_all()
 
-  with tf.Session() as sess:
-    merged_summary = tf.summary.merge_all()
-    summary_writer = tf.summary.FileWriter(FLAGS.logdir, graph=sess.graph)
-    projector.visualize_embeddings(summary_writer, config)
-    saver = tf.train.Saver()
+  def build_graph(self, embedding, logdir, input_files):
+    with self.graph.as_default():
+      self.build_input_pipeline(input_files)
+      self.build_embedding_layer(embedding)
+      self.build_rnn_layer()
+      self.build_classifier()
+      self.build_evaluation_layer()
+      self.build_training_op()
+      self.build_init_op()
+      self.build_summary_op(logdir)
 
-    sess.run(init_op)
+  def initialize_graph(self, session, embedding):
+    with self.graph.as_default():
+      session.run(self.init_op)
+      session.run(self.embedding_init_op, feed_dict={self.embedding_placeholder: embedding})
+      self.saver = tf.train.Saver()
+      self.coord = tf.train.Coordinator()
+      self.threads = tf.train.start_queue_runners(sess=session, coord=self.coord)
+      projector.visualize_embeddings(self.summary_writer, self.projector)
 
-    coord = tf.train.Coordinator()
-    threads = tf.train.start_queue_runners(sess=sess, coord=coord)
-    
-    sess.run(embeddings_init, feed_dict={embeddings_placeholder: embedding})
-    for i in range(num_epochs):
-      sess.run(train_op)
-      if i%50 == 0:
-        s = sess.run(merged_summary)
-        summary_writer.add_summary(s, i)
-      if i%500 == 0:
-        q, p, ans, acc = sess.run([questions, prediction, answers, accuracy])
+  def train_step(self, session, reverse_dictionary, answer_dict, logdir):
+    with self.graph.as_default():
+      if self.step%10 == 0:
+        summary = session.run(self.summary_op)
+        self.summary_writer.add_summary(summary, self.step)
+      if self.step%100 == 0:
+        q, p, ans, acc = session.run([self.questions, self.prediction, self.answers, self.accuracy])
         print('================================================================================')
-        print('Epoch %d' %(i))
+        print('Epoch %d' %(self.step))
         print('================================================================================')
         print('Accuracy: %f' %(acc))
         print_batch(reverse_dictionary, answer_dict, q, ans, p)
-        saver.save(sess, os.path.join(FLAGS.logdir, 'model.ckpt'), i)
+        self.saver.save(session, os.path.join(logdir, 'model.ckpt'), self.step)
+      session.run(self.train_op)
+      self.step = self.step + 1
 
-    coord.request_stop()
-    coord.join(threads)
+  def run_training(self, session, reverse_dictionary, answer_dict, logdir):
+    for i in range(self.params['num_epochs'] + 1):
+      self.train_step(session, reverse_dictionary, answer_dict, logdir)
+    self.coord.request_stop()
+    self.coord.join(self.threads)
+  
+  def get_graph(self):
+    return self.graph
+
+
+def build_and_run_graph(config, embedding, logdir, input_files, reverse_dictionary, answer_dict):
+  model = RNN_Model(config)
+  model.build_graph(embedding, logdir, input_files)
+  with tf.Session(graph=model.get_graph()) as sess:
+    model.initialize_graph(sess, embedding)
+    model.run_training(sess, reverse_dictionary, answer_dict, logdir)
+
 
 def main(_):
+  config = {
+      'batch_size': 64,
+      'num_hidden': 512,
+      'num_epochs': 5000,
+      'num_answers': 28
+  }
   if not tf.gfile.Exists(FLAGS.datadir):
     sys.exit('No data directory found')
   
@@ -240,15 +282,19 @@ def main(_):
     tf.gfile.MakeDirs(os.path.join(FLAGS.logdir, '1'))
     FLAGS.logdir = os.path.join(FLAGS.logdir, '1')
   else:
-    if tf.gfile.Exists(FLAGS.logdir):
-      runs = [int(folder) for folder in tf.gfile.ListDirectory(FLAGS.logdir)]
-      new_run = max(runs) + 1
-    else:
-      new_run = 1
+    runs = [int(folder) for folder in tf.gfile.ListDirectory(FLAGS.logdir)]
+    new_run = max(runs) + 1
     tf.gfile.MakeDirs(os.path.join(FLAGS.logdir, str(new_run)))
     FLAGS.logdir = os.path.join(FLAGS.logdir, str(new_run))
+
+  if tf.gfile.Exists(FLAGS.config_file) and FLAGS.config_file != '':
+    with open(FLAGS.config_file) as fp:
+      config = json.load(fp)
+  else:
+    print('No config file found, using default configuration')
   
-  build_and_run_graph(embedding, dictionary, reverse_dictionary, answer_dict)
+  build_and_run_graph(config, embedding, FLAGS.logdir, [os.path.join(FLAGS.datadir, 'train_examples.tfrecords')], reverse_dictionary, answer_dict)
+
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
@@ -264,5 +310,7 @@ if __name__ == '__main__':
                       help='JSON file with pretrained embedding dictionary')
   parser.add_argument('--vocab_file', type=str, default='data/vocab.tsv', 
                       help='.tsv file with vocabulary')
+  parser.add_argument('--config_file', type=str, default='', 
+                      help='JSON file with model configuration')
   FLAGS, unparsed = parser.parse_known_args()
   tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
