@@ -93,9 +93,12 @@ def print_batch(reverse_dictionary, answer_dict, questions, answers, predictions
 
 
 class RNN_Model:
-  def __init__(self, config):
+  def __init__(self, config, graph=None):
     self.params = config
-    self.graph = tf.Graph()
+    if graph is not None:
+      self.graph = graph
+    else:
+      self.graph = tf.Graph()
     self.saver = None
     self.projector = projector.ProjectorConfig()
     self.coord = None
@@ -279,6 +282,9 @@ def main(_):
   if FLAGS.clear_logdir:
     if tf.gfile.Exists(FLAGS.logdir):
       tf.gfile.DeleteRecursively(FLAGS.logdir)
+    tf.gfile.MakeDirs(os.path.join(FLAGS.logdir, '1'))
+    FLAGS.logdir = os.path.join(FLAGS.logdir, '1')
+  elif not tf.gfile.Exists(FLAGS.logdir):
     tf.gfile.MakeDirs(os.path.join(FLAGS.logdir, '1'))
     FLAGS.logdir = os.path.join(FLAGS.logdir, '1')
   else:
