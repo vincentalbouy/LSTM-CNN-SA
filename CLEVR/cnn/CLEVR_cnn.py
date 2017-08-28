@@ -532,8 +532,8 @@ def main(embedding):
 if __name__ == '__main__':
   embedding, dictionary, reverse_dictionary = build_embeddings('data/embeddings.json', 'data/vocab.tsv')
   # The following function generates the tfrecord used by the main.
-  #serialize_examples(question_dir, dictionary)
-  main(embedding)
+  serialize_examples(question_dir, dictionary)
+  #main(embedding)
   # test_imagenet('/Users/larrychen/Downloads/images')
   # run_lstm(embedding)
 
