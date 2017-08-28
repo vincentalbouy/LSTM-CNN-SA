@@ -13,13 +13,13 @@ from tensorflow.contrib.lookup import index_to_string_table_from_file
 
 id_to_w = {}
 id_to_ans = {}
-# img_dir = '/Users/larrychen/google-drive/GitHub/machine-intelligence/CLEVR/training_data/train_subset_000/images/'
-img_dir = '/home/lchen/Documents/CLEVR_v1.0/images/train/'
-# question_dir = '/Users/larrychen/Downloads/CLEVR_v1.0/questions/CLEVR_train_questions.json'
-question_dir = '/home/lchen/Documents/CLEVR_v1.0/questions/CLEVR_train_questions.json'
+# Directory containing images - do not forget about the last slash '/' ;)
+img_dir = '/Users/vincentalbouy/PycharmProjects/CLEVR_v1.0/images/train/'
+# Point to a question file for a given set of images.
+question_dir = '/Users/vincentalbouy/PycharmProjects/CLEVR_v1.0/questions/CLEVR_train_questions.json'
 pretrained = {}
 
-
+#this function returns embedding + dictionnary + reverse dictionnary
 def build_embeddings(embedding_file, vocab_file):
   model = json.load(open(embedding_file))
   vocabulary = [word.strip() for word in open(vocab_file)]
@@ -35,6 +35,8 @@ def build_embeddings(embedding_file, vocab_file):
     reverse_dictionary[i+1] = word
     dictionary[word] = i+1
   return embedding, dictionary, reverse_dictionary
+
+#extracting pretrained weights of resnet
 
 def extract_pretrained_weights(checkpoint_file):
   from tensorflow.python import pywrap_tensorflow
@@ -108,6 +110,7 @@ def serialize_examples(question_file, dictionary):
   assert len(labels) == len(examples), "Num examples does not match num labels"
   print('Done.')
 
+  # Makes length-of-the-questin + answer + image_file triplets and packs them into tfrecord.
   def make_example(question, answer, image_file):
     ex = tf.train.SequenceExample()
     ex.context.feature['length'].int64_list.value.append(len(question))
@@ -239,7 +242,7 @@ def input_pipeline(input_files, batch_size):
 
 def conv_layer(_input, ksize, out_channels, stride):
   name_scope = tf.contrib.framework.get_name_scope()
-  initializer = tf.constant_initializer(pretrained[os.path.join(name_scope, 'weights')])
+  initializer = tf.constant_initializer(pretrained[os.path.join(name_scope,'weights')])
   kernel_shape = [ksize, ksize, _input.get_shape()[-1], out_channels]
   weights = tf.get_variable('weights', kernel_shape, initializer=initializer, trainable=False)
   return tf.nn.conv2d(_input, weights, strides=[1, stride, stride, 1], padding='SAME', name='conv') 
@@ -461,6 +464,7 @@ def main(embedding):
 
   extract_pretrained_weights('data/resnet_v1_101.ckpt')
   example_batch = input_pipeline(['data/train_examples.tfrecords'], batch_size=32)
+  print(example_batch)
   lengths, questions, answers, images = example_batch
 
   logits = res_net(images)
@@ -527,7 +531,8 @@ def main(embedding):
 
 if __name__ == '__main__':
   embedding, dictionary, reverse_dictionary = build_embeddings('data/embeddings.json', 'data/vocab.tsv')
-  # serialize_examples(question_dir, dictionary)
+  # The following function generates the tfrecord used by the main.
+  #serialize_examples(question_dir, dictionary)
   main(embedding)
   # test_imagenet('/Users/larrychen/Downloads/images')
   # run_lstm(embedding)
