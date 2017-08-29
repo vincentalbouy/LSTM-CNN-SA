@@ -14,9 +14,9 @@ from tensorflow.contrib.lookup import index_to_string_table_from_file
 id_to_w = {}
 id_to_ans = {}
 # Directory containing images - do not forget about the last slash '/' ;)
-img_dir = 'LSTM-CNN-SA/CLEVR/cnn/data/CLEVR_v1.0/images/train/'
+img_dir = 'data/CLEVR_v1.0/images/train/'
 # Point to a question file for a given set of images.
-question_dir = 'LSTM-CNN-SA/CLEVR/cnn/data/CLEVR_v1.0/questions/CLEVR_train_questions.json'
+question_dir = 'data/CLEVR_v1.0/questions/CLEVR_train_questions.json'
 pretrained = {}
 
 #this function returns embedding + dictionnary + reverse dictionnary
